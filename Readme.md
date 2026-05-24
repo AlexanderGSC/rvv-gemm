@@ -4,6 +4,7 @@ This repository contains the analysis and progressive optimisation of a generic 
 
 The repository develops the algorithm through various stages:
 * **`GEMM_O2.c`**: Pure scalar code.
+* **`GEMM_O3.c`**: code vectorised by the compiler using the `-O3` flag.
 * **`GEMM_vaddmul.c`**: First vector approach using `vle32.v`, `vfmul.vf`, `vfadd.vv`.
 * **`GEMM_vmacc.c`**: Latency reduction by replacing the Mul/Add pair with the combined instruction `vfmacc.vf`.
 * **`GEMM_tiled.c`**: Implementation of *Loop Nest Blocking* (Tiling) by dividing the spatial problem into submatrices that fit into the L1 cache, eliminating *stores* with strides to RAM.
