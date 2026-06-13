@@ -1,6 +1,6 @@
 ## GEMM Optimization with RISC-V RVV 1.0
 
-This repository contains the analysis and progressive optimisation of a generic matrix multiplication algorithm (**GEMM**) for large matrices ($2000 \times 3000 \times 100$), running natively on a **64-bit RISC-V** architecture utilising the ** RVV 1.0** vector extension and advanced cache locality techniques (*Tiling*).
+This repository contains the analysis and progressive optimisation of a generic matrix multiplication algorithm (**GEMM**) for large matrices ($2000 \times 3000 \times 100$), running natively on a **64-bit RISC-V** architecture utilising the ** RVV 1.0** vector extension and advanced cache locality techniques (*Tiling*), ILP and Out Of Order execution.
 
 The repository develops the algorithm through various stages:
 * **`GEMM_O2.c`**: Pure scalar code.
@@ -8,6 +8,7 @@ The repository develops the algorithm through various stages:
 * **`GEMM_vaddmul.c`**: First vector approach using `vle32.v`, `vfmul.vf`, `vfadd.vv`.
 * **`GEMM_vmacc.c`**: Latency reduction by replacing the Mul/Add pair with the combined instruction `vfmacc.vf`.
 * **`GEMM_tiled.c`**: Implementation of *Loop Nest Blocking* (Tiling) by dividing the spatial problem into submatrices that fit into the L1 cache, eliminating *stores* with strides to RAM.
+* **`GEMM_unroll_tiled.c`**: Enabling ILP (Instruction Level Parallelism) with the implementation of loop unrolling with depth 4 and interleaving to enable OOO (Out-of-Order) execution, utilising the VPU pipeline and mitigating RAW risks.
 
 ## Benchmark Results
 
@@ -17,16 +18,16 @@ The experiment was carried out on a **Banana BPI-F3** SBC (with a RISC-V archite
 perf stat -e cycles,instructions,branches,branch-misses,L1-dcache-loads,L1-dcache-load-misses,L1-dcache-stores,L1-dcache-store-misses ./P3GEMM_version 2000 3000 100
 ```
 
-| Metric  | `GEMM_O2` (Base) | `GEMM_O3`  | `GEMM_vaddmul` | `GEMM_vmacc`  | `GEMM_tiled` |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Computing Time** | 2.881 s | 0.812 s | 0.776 s | 0.708 s | **0.319 s** |
-| **CPU Cycles (`cycles`)** | 5.484 M | 2.177 M | 2.138 M | 2.010 M | **1.389 M** |
-| **Instructions** | 5.412 M | 1.562 M | 793 M | 782 M | **675 M** |
-| **IPC (`insn per cycle`)** | **0.99** | 0.72 | 0.37 | 0.39 | 0.49 |
-| **L1 Loads (`loads`)** | 1.949 M | 466 M | 574 M | 574 M | **361 M** |
-| **L1 Load Misses** |  **1.955.513** | 1.877.319 | 2.044.323 | 2.036.231 | 2.479.215 |
-| **L1 Stores (`stores`)** | 689 M | 244 M | 280 M | 280 M | **91 M** |
-| **L1 Store Misses** | 568 K | 553 K | 550 K | 550 K | **546 K** |
+| Metric  | `GEMM_O2` (Base) | `GEMM_O3`  | `GEMM_vaddmul` | `GEMM_vmacc`  | `GEMM_tiled` | `GEMM_unrolled_tiled`
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Computing Time** | 2.881 s | 0.812 s | 0.776 s | 0.708 s | *0.319 s* | **0.211 s**
+| **CPU Cycles (`cycles`)** | 5.484 M | 2.177 M | 2.138 M | 2.010 M | 1.389 M | **1.234 M**
+| **Instructions** | 5.412 M | 1.562 M | 793 M | 782 M | 675 M | **674 M**
+| **IPC (`insn per cycle`)** | **0.99** | 0.72 | 0.37 | 0.39 | 0.49 | **0.55**
+| **L1 Loads (`loads`)** | 1.949 M | 466 M | 574 M | 574 M | 361 M | **223 M**
+| **L1 Load Misses** |  **1.955.513** | 1.877.319 | 2.044.323 | 2.036.231 | 2.479.215 | 2.415.152
+| **L1 Stores (`stores`)** | 689 M | 244 M | 280 M | 280 M | **91 M** |  **91 M**
+| **L1 Store Misses** | 568 K | 553 K | 550 K | 550 K | **546 K** | **543 K**
 
 
 ![speedups](result.png) 
@@ -56,14 +57,16 @@ perf stat -e cycles,instructions,branches,branch-misses,L1-dcache-loads,L1-dcach
 ```
 * **The misleading IPC of _O2:** Although **_O2** has the highest IPC (0.99), it is inefficient; the processor runs fast but only executes scalar instructions.
 * **Efficient operation fusion:** The _vmacc version reduces the number of instructions compared to _vaddmul (from 793M to 782M), demonstrating that the multiply and accumulate operations are fused into a single CPU cycle.
+* **Hardware-Saturating Instruction Interleaving:** Implementing a row-wise loop unrolling factor of 4 effectively hidden FMA (Fused Multiply-Add) latency, maximizing pipeline throughput and driving instruction per cycle (IPC) efficiency up to **0.55**.
 * **Store Loads traffic: _tiled** reduces L1 cache writes from 689 million to 91 million (a reduction of 86.7%), confirming that partial sums are retained in the registers before being written to memory.
 * **Data bus independence:** _tiled reduces L1 reads (loads) to one-fifth of the base version, preventing the CPU from suffering from data starvation and raising its actual IPC to 0.49.
+* **ILP and VPU saturation
 * **Consistency of mandatory failures:** Write failures (store-misses) remain constant (~550 K) across all versions because they correspond to the mandatory initialisation of the array.
 ---
 
 ### Tile Scaling Analysis and L1 Cache Behaviour
 
-The Banana Pi features a **32 KB L1 data cache** and operates with 32-bit floating-point precision (4 bytes per element). An empirical study was carried out by varying the tile size to find the hardware’s optimal saturation point:
+The Banana Pi features a **32 KB L1 data cache** and operates with 32-bit floating-point precision (4 bytes per element). An empirical study was carried out by varying the tile size to find the hardware’s optimal saturation point. Here are the results for the tiled version without unrolling :
 
  Tile Size | Computation Time | L1 Loads | L1 Misses | % Misses | L1 Cache Status |
 | :---: | :---: | :---: | :---: | :---: | :--- |
