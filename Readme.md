@@ -1,6 +1,6 @@
 ## GEMM Optimization with RISC-V RVV 1.0
 
-This repository contains the analysis and progressive optimisation of a generic matrix multiplication algorithm (**GEMM**) for large matrices ($2000 \times 3000 \times 100$), running natively on a **64-bit RISC-V** architecture utilising the ** RVV 1.0** vector extension and advanced cache locality techniques (*Tiling*), ILP and Out Of Order execution.
+This repository contains the analysis and progressive optimisation of a generic matrix multiplication algorithm (**GEMM**) for large matrices ($2000 \times 3000 \times 100$), running natively on a **64-bit RISC-V** architecture utilising the **RVV 1.0** vector extension and advanced cache locality techniques (*Tiling*), ILP, Out Of Order execution and multithreading via openMP. All improvements are cumulative:
 
 The repository develops the algorithm through various stages:
 * **`GEMM_O2.c`**: Pure scalar code.
@@ -9,6 +9,7 @@ The repository develops the algorithm through various stages:
 * **`GEMM_vmacc.c`**: Latency reduction by replacing the Mul/Add pair with the combined instruction `vfmacc.vf`.
 * **`GEMM_tiled.c`**: Implementation of *Loop Nest Blocking* (Tiling) by dividing the spatial problem into submatrices that fit into the L1 cache, eliminating *stores* with strides to RAM.
 * **`GEMM_unroll_tiled.c`**: Enabling ILP (Instruction Level Parallelism) with the implementation of loop unrolling with depth 4 and interleaving to enable OOO (Out-of-Order) execution, utilising the VPU pipeline and mitigating RAW risks.
+* **`GEMM_omp.c`**: multithreading application using OpenMP, to make the most of the SBC’s 8 physical cores.
 
 ## Benchmark Results
 
@@ -18,16 +19,17 @@ The experiment was carried out on a **Banana BPI-F3** SBC (with a RISC-V archite
 perf stat -e cycles,instructions,branches,branch-misses,L1-dcache-loads,L1-dcache-load-misses,L1-dcache-stores,L1-dcache-store-misses ./P3GEMM_version 2000 3000 100
 ```
 
-| Metric  | `GEMM_O2` (Base) | `GEMM_O3`  | `GEMM_vaddmul` | `GEMM_vmacc`  | `GEMM_tiled` | `GEMM_unrolled_tiled`
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Computing Time** | 2.881 s | 0.812 s | 0.776 s | 0.708 s | *0.319 s* | **0.211 s**
-| **CPU Cycles (`cycles`)** | 5.484 M | 2.177 M | 2.138 M | 2.010 M | 1.389 M | **1.234 M**
-| **Instructions** | 5.412 M | 1.562 M | 793 M | 782 M | 675 M | **674 M**
-| **IPC (`insn per cycle`)** | **0.99** | 0.72 | 0.37 | 0.39 | 0.49 | **0.55**
-| **L1 Loads (`loads`)** | 1.949 M | 466 M | 574 M | 574 M | 361 M | **223 M**
-| **L1 Load Misses** |  **1.955.513** | 1.877.319 | 2.044.323 | 2.036.231 | 2.479.215 | 2.415.152
-| **L1 Stores (`stores`)** | 689 M | 244 M | 280 M | 280 M | **91 M** |  **91 M**
-| **L1 Store Misses** | 568 K | 553 K | 550 K | 550 K | **546 K** | **543 K**
+| Metric  | `GEMM_O2` (Base) | `GEMM_O3`  | `GEMM_vaddmul` | `GEMM_vmacc`  | `GEMM_tiled` | `GEMM_unrolled_tiled` | `GEMM_omp`
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Computing Time** | 2.881 s | 0.812 s | 0.776 s | 0.708 s | *0.319 s* | 0.211 s |  **0.043 s** 
+|**Speedup** | 1.0x | 3.75x | 3.69x | 4.06x | 8.99x | 15.02x | **66.58x** 
+| **CPU Cycles (`cycles`)** | 5.484 M | 2.177 M | 2.138 M | 2.010 M | 1.389 M | **1.234 M** | 1.436 M
+| **Instructions** | 5.412 M | 1.562 M | 793 M | 782 M | 675 M | **674 M** | 741 M
+| **IPC (`insn per cycle`)** | **0.99** | 0.72 | 0.37 | 0.39 | 0.49 | **0.55** | **0.52**
+| **L1 Loads (`loads`)** | 1.949 M | 466 M | 574 M | 574 M | 361 M | **223 M** | 231 M
+| **L1 Load Misses** |  **1.955.513** | 1.877.319 | 2.044.323 | 2.036.231 | 2.479.215 | 2.415.152 | 2.300.855
+| **L1 Stores (`stores`)** | 689 M | 244 M | 280 M | 280 M | **91 M** |  **91 M** | **91 M**
+| **L1 Store Misses** | 568 K | 553 K | 550 K | 550 K | **546 K** | **543 K** | **549 M**
 
 
 ![speedups](result.png) 
